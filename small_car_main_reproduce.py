@@ -280,7 +280,7 @@ def main(mode):
     # server = Server(port=5055) #5055
     # t = CustomThread(server)
     #max-times_in_episode target change
-    env = Env(max_times_in_episode=3, max_times_in_game=6, end_distance=(0.2, 7), stop_target=False, target_fixed_sec=12)
+    env = Env(max_times_in_episode=30, max_times_in_game=210, end_distance=(0.2, 7), stop_target=False, target_fixed_sec=12)
   
     # 0518_car_to_target_few_features 0517_car_to_target_few_features
     chpt_dir_load = os.path.join(os.path.dirname(__file__),  'Model', 'DDPG', '0623_car_to_target_slow_retrain_double_prev_/model') #0623_car_to_target_slow_retrain_double_prev_wheel_d_05 0621_car_to_target_slow_retrain_double_prev_wheel_d_05 0613_car_to_target_slow_retrain_double_prev:5000 0601_car_to_target_test_1

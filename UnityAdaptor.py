@@ -159,9 +159,9 @@ class UnityAdaptor():
         
         for key, value in obs.items():
              if isinstance(value, str) and value.startswith('(') and value.endswith(')'):
-                coordinate_str = value.strip('()')  # 去掉括号
-                coordinates = list(map(float, coordinate_str.split(',')))  # 将字符串分割并转换为浮点数，然后转换为列表
-                obs[key] = coordinates  # 替换原始字符串
+                coordinate_str = value.strip('()')  
+                coordinates = list(map(float, coordinate_str.split(',')))  
+                obs[key] = coordinates  
 
         car_quaternion = [obs['ROS2CarQuaternion'][0], obs['ROS2CarQuaternion'][1],
                     obs['ROS2CarQuaternion'][2], obs['ROS2CarQuaternion'][3]]
