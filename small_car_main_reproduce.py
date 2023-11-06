@@ -7,6 +7,7 @@ import os
 
 import Utility
 from TCPServer import Server
+
 from Environment import Environment
 # from CustomThread import CustomThread
 from AgentDDPG import Agent
@@ -17,7 +18,50 @@ import random
 
 import time
 
+import threading
+import sys
+from rclpy.node import Node
+import rclpy
+from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import String
+from std_msgs.msg import ByteMultiArray
+import base64
 DEG2RAD = 0.01745329251
+
+unityState = ""
+
+class AiNode(Node):
+    def __init__(self):
+        super().__init__("aiNode")
+        self.get_logger().info("Ai start")#ros2Ai #unity2Ros
+        self.subsvriber_ = self.create_subscription(String, "unity2Ros", self.receive_data_from_ros, 10)
+        
+        self.publisher_Ai2ros = self.create_publisher(Float32MultiArray, 'ros2Unity', 10)#Ai2ros #ros2Unity
+        
+
+    
+    def publish2Ros(self, data):
+        self.data2Ros = Float32MultiArray()
+        self.data2Ros.data = data
+        self.publisher_Ai2ros.publish(self.data2Ros)
+
+    def receive_data_from_ros(self, msg):
+        global unityState        
+        unityState = msg.data
+        # print(unityState)
+        # self.unityState = msg.data
+
+def spin_pros(node):
+    exe = rclpy.executors.SingleThreadedExecutor()
+    exe.add_node(node)
+    exe.spin()
+    rclpy.shutdown()
+    sys.exit(0)
+
+def returnUnityState():
+    while len(unityState) == 0:
+        pass
+    return unityState
 
 # Seed
 seed = 123
@@ -29,15 +73,26 @@ random.seed(seed)
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
 
+# rosNode = RosServer.get_ai_node_data()
+
+
 class Env(Environment):
     def __init__(self, max_times_in_episode, max_times_in_game, end_distance, stop_target, target_fixed_sec):
         super().__init__(max_times_in_episode, max_times_in_game, end_distance, stop_target, target_fixed_sec)
         self.stucked_count = 0
     # check episode termination
-    def check_termination(self):
+    def check_termination(self, state):
+        self.pos = [state.car_pos.x, state.car_pos.y]
+        self.target_pos = [state.final_target_pos.x, state.final_target_pos.y]
+        # print("target position: ", self.target_pos)
+        # print("car position: ", self.pos)
+        
         distance = math.dist(self.pos, self.target_pos)
+        
+
         self.reach_goal = ((abs(self.carOrientation - self.targetOrientation) <= 20) \
             and distance <= self.end_distance[0])
+        
         # self.reach_goal = (abs(self.carOrientation - self.targetOrientation) < 5) 
 
         self.distance_out = distance >= self.end_distance[1] or distance <= self.end_distance[0]
@@ -72,36 +127,51 @@ class Env(Environment):
         target_pos = [state.final_target_pos.x , state.final_target_pos.y]
 
         self.targetOrientation = Utility.rad2deg(Utility.radFromUp(self.pos, target_pos))
-    
+
         ### distance to final target
         prevTargetDist = self.calculate_distance(self.prev_pos, target_pos)
         distanceToTarget = self.calculate_distance(self.pos, target_pos)
+
         distanceDiff = distanceToTarget - prevTargetDist
-        distanceDiff *= 400
+        
+        # if distanceDiff > 5:
+        #     reward -= distanceDiff*800
+        # elif distanceDiff > 3:
+        #     reward -= distanceDiff*300
+        
+        
+        # elif distanceDiff < 3:
+        #     reward += distanceDiff*200
+        # elif distanceDiff < 2.5:
+        #     reward += distanceDiff*400
+        
         if distanceDiff > 0:
             distanceDiff *= 2
-        reward += -distanceDiff
-        # print("target d", -distanceDiff)
+            distanceDiff *= 400
+            reward -= distanceDiff
+        elif distanceDiff < 0:
+            reward += 100*-(distanceDiff)
+        
+
+        
+            
+        
 
         ### angle gap to target
         prevTargetOrientation = Utility.rad2deg(Utility.radFromUp(self.prev_pos, target_pos))
+
         prevAngleGapToTarget = self.calculate_orientation_diff(prevCarOrientation, prevTargetOrientation)
         TargetOrientation = Utility.rad2deg(Utility.radFromUp(self.pos, target_pos))
         angleGapToTarget = self.calculate_orientation_diff(self.carOrientation, TargetOrientation)
         targetAngleDiff = angleGapToTarget - prevAngleGapToTarget
+        # print('targetAngle: ', targetAngleDiff)
         targetAngleDiff *= 4
         if targetAngleDiff > 0:
-            targetAngleDiff *= 2
+            targetAngleDiff *= 4
         reward += -targetAngleDiff
-        # print("target a", -targetAngleDiff)
-        # print("distance: ", distanceToTarget)
-        # print("target: ", state.final_target_pos)
-        # print("gap: ", angleGapToTarget)
-        # print("target angle: ", prevTargetOrientation)
-        # print("car angle: ", self.carOrientation)
+ 
     
 
-        ###
         if ((self.game_ctr - 1) // 5) == ((self.game_ctr - 2) // 5):
             if (state.action_wheel_angular_vel.left_back < 0 and new_state.action_wheel_angular_vel.left_back > 0) or \
             (state.action_wheel_angular_vel.left_back > 0 and new_state.action_wheel_angular_vel.left_back < 0):
@@ -111,7 +181,7 @@ class Env(Environment):
             self.stucked_count = 0
         
         if self.stucked_count > 1:
-            reward += -30 * self.stucked_count
+            reward += -200 * self.stucked_count
             print("count ", self.stucked_count)
         
         
@@ -124,10 +194,10 @@ class Env(Environment):
         self.episode_ctr += 1
         self.game_ctr += 1
         self.total_ctr += 1
-        
+        # print("new_state: ", new_state.final_target_pos)
         reward = self.calculate_reward(state, new_state)
         
-        done, reachGoal = self.check_termination() #self.trailOrientation
+        done, reachGoal = self.check_termination(state) #self.trailOrientation
 
         if reachGoal:
             reward += 400
@@ -194,58 +264,23 @@ class Agt(Agent):
         feature.append(state.wheel_angular_vel.left_back)
         feature.append(state.wheel_angular_vel.right_back)
 
-        # feature.append(state.wheel_angular_vel.right_back)
-        # print(state.wheel_angular_vel.right_back)
-        # feature.append(state.wheel_angular_vel.left_front)
-        # feature.append(state.wheel_angular_vel.right_back)
-        # feature.append(state.wheel_angular_vel.right_front)
-
-
-        # 轉動軸 in radians
-        # feature.append(utility.decomposeCosSin(state.wheel_orientation.left_back)) 
-        
-        # feature.append(Utility.decomposeCosSin(state.wheel_orientation.left_front))
-        
-        # feature.append(utility.decomposeCosSin(state.wheel_orientation.right_back))
-        # feature.append(utility.decomposeCosSin(state.wheel_orientation.right_front))
-        
-
-        # min lidar displacement in meters
-        # feature.append(-state.min_lidar_direciton.x)
-        # feature.append(-state.min_lidar_direciton.y)
-
-        # min lidar distance
-        # feature.append(state.min_lidar)
-        # feature.append(-1)
-
-        # min lidar relative angle to car in radian
-        # feature.append(Utility.decomposeCosSin(state.min_lidar_relative_angle))
-        # feature.append(0)
-        # feature.append(0)
-
-        # angle in radian between up(0, 1)vector and car to obstacle
-        # rad = Utility.radFromUp([state.car_pos.x, state.car_pos.y], \
-        #     [state.car_pos.x + state.min_lidar_direciton.x, state.car_pos.y + state.min_lidar_direciton.y])
-        # feature.append(Utility.decomposeCosSin(rad))
-
-        # action
-        # feature.append(state.action_wheel_orientation.left_front)
         feature.append(state.action_wheel_angular_vel.left_back)
         feature.append(state.action_wheel_angular_vel.right_back)
 
         feature = Utility.flatten(feature)
-        
-        
-        # print(feature)
+                
         return feature
 
 def main(mode):
     print('The mode is:', mode)
 
+    
+
     # TODO paramaterization
-    server = Server(port=5055) #5055
+    # server = Server(port=5055) #5055
     # t = CustomThread(server)
-    env = Env(max_times_in_episode=30, max_times_in_game=210, end_distance=(0.2, 7), stop_target=False, target_fixed_sec=12)
+    #max-times_in_episode target change
+    env = Env(max_times_in_episode=3, max_times_in_game=6, end_distance=(0.2, 7), stop_target=False, target_fixed_sec=12)
   
     # 0518_car_to_target_few_features 0517_car_to_target_few_features
     chpt_dir_load = os.path.join(os.path.dirname(__file__),  'Model', 'DDPG', '0623_car_to_target_slow_retrain_double_prev_/model') #0623_car_to_target_slow_retrain_double_prev_wheel_d_05 0621_car_to_target_slow_retrain_double_prev_wheel_d_05 0613_car_to_target_slow_retrain_double_prev:5000 0601_car_to_target_test_1
@@ -259,7 +294,10 @@ def main(mode):
         input_dims=13, n_actions=2, batch_size=100, layer1_size=400, layer2_size=300, \
         
         chpt_dir_load=chpt_dir_load, chpt_dir_save=chpt_dir_save)
-    # replay_buffer_size=1000000, !! test\
+    # replay_buffer_size=1000000, !! test\rclpy.init()
+
+    
+
     epoch = 5000
 
     reward_history, reward_history_ = ([] for i in range(2))
@@ -276,18 +314,28 @@ def main(mode):
                 wheel_orientation=Entity.WheelOrientation(left_front=0.0, right_front=0.0),
                 car_angular_vel=0.0,
                 wheel_angular_vel=Entity.WheelAngularVel(left_back=0.0, left_front=0.0, right_back=0.0, right_front=0.0),
-                min_lidar=0.0,
+                min_lidar=[],
                 min_lidar_position=Entity.ROS2Point(x=0.0, y=0.0, z=0.0),
                 second_min_lidar_position=Entity.ROS2Point(x=0.0, y=0.0, z=0.0),
                 third_min_lidar_position=Entity.ROS2Point(x=0.0, y=0.0, z=0.0),
                 max_lidar=0.0,
+                min_lidar_direciton = [0.0],
                 # min_lidar_direciton=Entity.ROS2Point(x=0.0, y=0.0, z=0.0),
-                max_lidar_position=Entity.ROS2Point(x=0.0, y=0.0, z=0.0),
+                # max_lidar_position=Entity.ROS2Point(x=0.0, y=0.0, z=0.0),
                 # min_lidar_relative_angle=0.0,
                 action_wheel_angular_vel=Entity.WheelAngularVel(left_back=0.0, left_front=0.0, right_back=0.0, right_front=0.0),
                 action_wheel_orientation=Entity.WheelOrientation(left_front=0.0, right_front=0.0))
+    
+    # node_thread = threading.Thread(target=RosServer.main())
 
+    rclpy.init()
+    node = AiNode()
+    pros = threading.Thread(target=spin_pros, args=(node,))
+    pros.start()  
+    
+    
     try:
+        
         if mode == 'train':
             lr_c_history, lr_a_history, critic_loss_history, actor_loss_history, critic_loss_history_, actor_loss_history_ = (
                 [] for i in range(6))
@@ -296,7 +344,7 @@ def main(mode):
             
             # TODO paramaterization
             load_step = 0  # 0
-            # agent.load_models(load_step)
+            # agent.load_models(load_step) #********
 
             # if os.path.exists(chpt_dir_buffer):
             #     state_mem, action_mem, reward_mem, new_state_mem, terminal_mem = Utility.load_buffer(chpt_dir_buffer, load_step)
@@ -308,20 +356,27 @@ def main(mode):
             prev_pos = [0, 0]
             trail_original_pos = [0, 0]
             unity_action = [0, 0]
-
+            
             for i in range(load_step+1, load_step+epoch+1):
                 if unity_obs == None:
                     while unity_obs is None:
-                        unity_obs = server.recvData()
+                        unity_obs = returnUnityState()
+                        # unity_obs = json.loads(unity_obs)
+                        
                         
                     state = unity_adaptor.transfer_obs(unity_obs, unity_action)    
+                    
                     env.restart_game(state)
+
                 else:
                     restart_game = env.restart_episode()
                     if restart_game:
-                        new_target = {'title': 'new target', 'content': {}}
-                        server.sendAction(new_target)
-                        unity_obs = server.recvData()
+                        # new_target = {'title': 'new target', 'content': {}} 
+                        new_target = [1.0]
+                        node.publish2Ros(new_target)
+                        # server.sendAction(new_target)
+                        # unity_obs = server.recvData()
+                        unity_obs = returnUnityState()
                         state = unity_adaptor.transfer_obs(unity_obs, unity_action)    
                         env.restart_game(state)
 
@@ -334,7 +389,8 @@ def main(mode):
                     
                     action_sent_to_unity, unity_action = unity_adaptor.trasfer_action(ai_action)
                     
-                    server.sendAction(action_sent_to_unity)
+                    node.publish2Ros(action_sent_to_unity)
+                    # server.sendAction(action_sent_to_unity)
 
                     time.sleep(0.5) ######
 
@@ -345,10 +401,9 @@ def main(mode):
                     #     elapsed_time += 1
                     # print(elapsed_time)
                     # prev_time_step = datetime.now().microsecond/1000000
-
-                    unity_new_obs = server.recvData()
+                    unity_new_obs = returnUnityState()
+                    # unity_new_obs = server.recvData()
                     new_state = unity_adaptor.transfer_obs(unity_new_obs, unity_action)
-                    
                     reward, done, info = env.step(state, new_state)
                     
                     score += reward

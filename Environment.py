@@ -108,8 +108,7 @@ class Environment():
         self.game_ctr = 0
         self.pos = [state.car_pos.x, state.car_pos.y]
         self.inital_pos = self.pos
-        # self.pos = [0., 0.] 
-    
+        # self.pos = [0., 0.]
         self.target_pos = [state.final_target_pos.x, state.final_target_pos.y]
         # self.target_pos = [self.pos[0] + obs['final target pos']['x'], self.pos[1] + obs['final target pos']['y']]
 
